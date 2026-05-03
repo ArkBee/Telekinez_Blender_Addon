@@ -1,9 +1,9 @@
 bl_info = {
-    "name": "SpaceMouse Object Control",
+    "name": "Telekinez SpaceMouse",
     "author": "Telekinez",
     "version": (1, 0),
     "blender": (4, 0, 0),
-    "location": "View3D > N-Panel > SpaceMouse",
+    "location": "View3D > N-Panel > Telekinez",
     "description": "Control object instead of camera using SpaceMouse",
     "category": "3D View",
 }
@@ -116,8 +116,8 @@ class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
     """Creates a Panel in the 3D-Viewport N-Menu"""
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "SpaceMouse"
-    bl_label = "SpaceMouse Control"
+    bl_category = "Telekinez"
+    bl_label = "Telekinez SpaceMouse"
 
     def draw(self, context):
         layout = self.layout
