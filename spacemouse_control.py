@@ -65,6 +65,19 @@ class SpaceMouseSettings(bpy.types.PropertyGroup):
         description="Last event Info",
         default="Ready..."
     )
+    
+    show_inversion_settings: bpy.props.BoolProperty(
+        name="Invert Axes Settings",
+        description="Show separate axis inversion settings",
+        default=False
+    )
+    inv_tx: bpy.props.BoolProperty(name="Invert Move X (Left/Right)", default=False)
+    inv_ty: bpy.props.BoolProperty(name="Invert Move Y (Forward/Back)", default=False)
+    inv_tz: bpy.props.BoolProperty(name="Invert Move Z (Up/Down)", default=False)
+    
+    inv_rx: bpy.props.BoolProperty(name="Invert Pitch (Tilt F/B)", default=False)
+    inv_ry: bpy.props.BoolProperty(name="Invert Roll (Tilt L/R)", default=False)
+    inv_rz: bpy.props.BoolProperty(name="Invert Yaw (Twist)", default=False)
 
 class NDOF_OT_reset_object(bpy.types.Operator):
     """Сбросить координаты объекта по нулям"""
@@ -117,6 +130,27 @@ class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
         
         row = layout.row()
         row.operator("view3d.ndof_reset_object", text="Reset Object to Zero", icon='LOOP_BACK')
+        
+        layout.separator()
+        
+        # Выпадающий список (Box) инверсии осей
+        box = layout.box()
+        box.prop(sm_settings, "show_inversion_settings", 
+                 icon='TRIA_DOWN' if sm_settings.show_inversion_settings else 'TRIA_RIGHT', 
+                 emboss=False)
+        
+        if sm_settings.show_inversion_settings:
+            col = box.column(align=True)
+            col.label(text="Translation:")
+            col.prop(sm_settings, "inv_tx")
+            col.prop(sm_settings, "inv_ty")
+            col.prop(sm_settings, "inv_tz")
+            col.separator()
+            col.label(text="Rotation:")
+            col.prop(sm_settings, "inv_rx")
+            col.prop(sm_settings, "inv_ry")
+            col.prop(sm_settings, "inv_rz")
+            col.separator()
         
         layout.separator()
         
@@ -210,18 +244,19 @@ class NDOF_OT_object_control(bpy.types.Operator):
                         local_diff = q_view.inverted() @ (current_loc - self.saved_loc)
                         delta_dist = current_dist - self.saved_dist
                         
-                        # Определение осей для перемещения:
-                        sm_tx = local_diff.x
-                        sm_ty = -delta_dist - local_diff.z
-                        sm_tz = local_diff.y
+                        # Определение осей для перемещения (с учетом инверсии пользовательских настроек):
+                        sm_tx = local_diff.x * (-1 if sm_settings.inv_tx else 1)
+                        sm_ty = (-delta_dist - local_diff.z) * (-1 if sm_settings.inv_ty else 1)
+                        sm_tz = local_diff.y * (-1 if sm_settings.inv_tz else 1)
                         
                         # 2. Извлекаем вращение
                         q_diff_local = q_view.inverted() @ current_rot.copy()
                         euler_diff = q_diff_local.to_euler('XYZ')
                         
-                        sm_rx = euler_diff.x    # Pitch
-                        sm_ry = -euler_diff.z   # Roll 
-                        sm_rz = -euler_diff.y   # Yaw 
+                        # Применение инверсии вращения
+                        sm_rx = euler_diff.x * (-1 if sm_settings.inv_rx else 1)
+                        sm_ry = -euler_diff.z * (-1 if sm_settings.inv_ry else 1)
+                        sm_rz = -euler_diff.y * (-1 if sm_settings.inv_rz else 1)
                         
                         if sm_settings.use_view_space:
                             # Перемещение относительно камеры (View Space)
