@@ -15,6 +15,9 @@ import rna_keymap_ui
 import bpy
 from bpy.props import EnumProperty, StringProperty, FloatProperty, BoolProperty
 
+def update_lock_horizon(self, context):
+    context.preferences.inputs.use_rotate_around_active = self.lock_horizon
+
 def update_mode(self, context):
     prefs = context.preferences.inputs
     if self.mode == 'OBJECT':
@@ -83,6 +86,13 @@ class SpaceMouseSettings(bpy.types.PropertyGroup):
     inv_ry: BoolProperty(name="Invert Roll (Tilt L/R)", default=False)
     inv_rz: BoolProperty(name="Invert Yaw (Twist)", default=False)
 
+    lock_horizon: BoolProperty(
+        name="Lock Horizon",
+        description="Lock viewport horizon while orbiting with mouse (no horizon drift)",
+        default=False,
+        update=update_lock_horizon
+    )
+
 class NDOF_OT_reset_object(bpy.types.Operator):
     """Сбросить координаты объекта по нулям"""
     bl_idname = "view3d.ndof_reset_object"
@@ -116,6 +126,18 @@ class NDOF_OT_toggle_mode(bpy.types.Operator):
         self.report({'INFO'}, f"SpaceMouse Mode: {settings.mode}")
         return {'FINISHED'}
 
+class NDOF_OT_toggle_lock_horizon(bpy.types.Operator):
+    """Переключить блокировку горизонта"""
+    bl_idname = "view3d.ndof_toggle_lock_horizon"
+    bl_label = "Toggle Lock Horizon"
+
+    def execute(self, context):
+        settings = context.scene.spacemouse_settings
+        settings.lock_horizon = not settings.lock_horizon
+        state = "ON" if settings.lock_horizon else "OFF"
+        self.report({'INFO'}, f"Lock Horizon: {state}")
+        return {'FINISHED'}
+
 class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
     """Creates a Panel in the 3D-Viewport N-Menu"""
     bl_space_type = 'VIEW_3D'
@@ -130,6 +152,7 @@ class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
 
         layout.prop(sm_settings, "mode", expand=True)
         layout.prop(sm_settings, "use_view_space", toggle=True, icon='TRACKING')
+        layout.prop(sm_settings, "lock_horizon", toggle=True, icon='LOCKVIEW_ON' if sm_settings.lock_horizon else 'LOCKVIEW_OFF')
         layout.prop(sm_settings, "sensitivity", slider=True)
         
         layout.operator("view3d.ndof_reset_object", text="Reset Object to Zero", icon='LOOP_BACK')
@@ -163,13 +186,16 @@ class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
         if kc:
             km = kc.keymaps.get('3D View')
             if km:
-                kmi = next((item for item in km.keymap_items if item.idname == "view3d.ndof_toggle_mode"), None)
-                if kmi:
-                    col = layout.column()
+                kmi_mode = next((item for item in km.keymap_items if item.idname == "view3d.ndof_toggle_mode"), None)
+                kmi_horizon = next((item for item in km.keymap_items if item.idname == "view3d.ndof_toggle_lock_horizon"), None)
+                col = layout.column()
+                col.context_pointer_set("keymap", km)
+                if kmi_mode:
                     col.label(text="Toggle Mode Shortcut:")
-                    
-                    col.context_pointer_set("keymap", km)
-                    rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
+                    rna_keymap_ui.draw_kmi([], kc, km, kmi_mode, col, 0)
+                if kmi_horizon:
+                    col.label(text="Toggle Lock Horizon Shortcut:")
+                    rna_keymap_ui.draw_kmi([], kc, km, kmi_horizon, col, 0)
         
         layout.separator()
         
@@ -336,6 +362,7 @@ classes = (
     NDOF_OT_cancel_control,
     NDOF_OT_reset_object,
     NDOF_OT_toggle_mode,
+    NDOF_OT_toggle_lock_horizon,
 )
 
 addon_keymaps = []
@@ -352,6 +379,8 @@ def register():
         km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
         # Создаем шорткат - Ctrl + Shift + M
         kmi = km.keymap_items.new(NDOF_OT_toggle_mode.bl_idname, type='M', value='PRESS', ctrl=True, shift=True)
+        addon_keymaps.append((km, kmi))
+        kmi = km.keymap_items.new(NDOF_OT_toggle_lock_horizon.bl_idname, type='H', value='PRESS', ctrl=True, shift=True)
         addon_keymaps.append((km, kmi))
 
 def unregister():
