@@ -8,8 +8,12 @@ bl_info = {
     "category": "3D View",
 }
 
+import time
+import mathutils
+import rna_keymap_ui
+
 import bpy
-from bpy.props import EnumProperty, StringProperty, FloatProperty
+from bpy.props import EnumProperty, StringProperty, FloatProperty, BoolProperty
 
 def update_mode(self, context):
     prefs = context.preferences.inputs
@@ -23,7 +27,7 @@ def update_mode(self, context):
         prefs.use_ndof_lock_horizon = False
         
         # Центрируем ось вращения NDOF на объекте (помещаем джойстик "внутрь" объекта)
-        if context.active_object and context.space_data.type == 'VIEW_3D':
+        if context.active_object and context.space_data and context.space_data.type == 'VIEW_3D':
             rv3d = context.space_data.region_3d
             rv3d.view_location = context.active_object.location
     else:
@@ -44,14 +48,14 @@ class SpaceMouseSettings(bpy.types.PropertyGroup):
         update=update_mode
     )
     saved_orbit: StringProperty(default="")
-    saved_lock_horizon: bpy.props.BoolProperty(default=True)
-    
-    use_view_space: bpy.props.BoolProperty(
+    saved_lock_horizon: BoolProperty(default=True)
+
+    use_view_space: BoolProperty(
         name="View Relative",
         description="Move and rotate relative to camera view",
         default=True
     )
-    
+
     sensitivity: FloatProperty(
         name="Sensitivity",
         description="Multiplier for movement and rotation",
@@ -65,19 +69,19 @@ class SpaceMouseSettings(bpy.types.PropertyGroup):
         description="Last event Info",
         default="Ready..."
     )
-    
-    show_inversion_settings: bpy.props.BoolProperty(
+
+    show_inversion_settings: BoolProperty(
         name="Invert Axes Settings",
         description="Show separate axis inversion settings",
         default=False
     )
-    inv_tx: bpy.props.BoolProperty(name="Invert Move X (Left/Right)", default=False)
-    inv_ty: bpy.props.BoolProperty(name="Invert Move Y (Forward/Back)", default=False)
-    inv_tz: bpy.props.BoolProperty(name="Invert Move Z (Up/Down)", default=False)
-    
-    inv_rx: bpy.props.BoolProperty(name="Invert Pitch (Tilt F/B)", default=False)
-    inv_ry: bpy.props.BoolProperty(name="Invert Roll (Tilt L/R)", default=False)
-    inv_rz: bpy.props.BoolProperty(name="Invert Yaw (Twist)", default=False)
+    inv_tx: BoolProperty(name="Invert Move X (Left/Right)", default=False)
+    inv_ty: BoolProperty(name="Invert Move Y (Forward/Back)", default=False)
+    inv_tz: BoolProperty(name="Invert Move Z (Up/Down)", default=False)
+
+    inv_rx: BoolProperty(name="Invert Pitch (Tilt F/B)", default=False)
+    inv_ry: BoolProperty(name="Invert Roll (Tilt L/R)", default=False)
+    inv_rz: BoolProperty(name="Invert Yaw (Twist)", default=False)
 
 class NDOF_OT_reset_object(bpy.types.Operator):
     """Сбросить координаты объекта по нулям"""
@@ -128,8 +132,7 @@ class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
         layout.prop(sm_settings, "use_view_space", toggle=True, icon='TRACKING')
         layout.prop(sm_settings, "sensitivity", slider=True)
         
-        row = layout.row()
-        row.operator("view3d.ndof_reset_object", text="Reset Object to Zero", icon='LOOP_BACK')
+        layout.operator("view3d.ndof_reset_object", text="Reset Object to Zero", icon='LOOP_BACK')
         
         layout.separator()
         
@@ -165,8 +168,6 @@ class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
                     col = layout.column()
                     col.label(text="Toggle Mode Shortcut:")
                     
-                    # Рисуем стандартный виджет Blender для изменения горячей клавиши
-                    import rna_keymap_ui
                     col.context_pointer_set("keymap", km)
                     rna_keymap_ui.draw_kmi([], kc, km, kmi, col, 0)
         
@@ -187,12 +188,6 @@ class NDOF_OT_object_control(bpy.types.Operator):
     """Слушатель SpaceMouse событий (Modal)"""
     bl_idname = "view3d.ndof_object_control"
     bl_label = "NDOF Object Control Modal"
-    
-    _timer = None
-    saved_loc = None
-    saved_rot = None
-    saved_dist = None
-    last_ndof_time = 0.0
 
     def modal(self, context, event):
         sm_settings = context.scene.spacemouse_settings
@@ -224,20 +219,18 @@ class NDOF_OT_object_control(bpy.types.Operator):
                 self.saved_rot = current_rot
                 self.saved_dist = current_dist
 
-            import time
             is_ndof_moving = (time.time() - self.last_ndof_time < 0.2)
 
             if sm_settings.mode == 'OBJECT' and is_ndof_moving:
                 # Проверяем, сдвинулся ли вьюпорт
                 if (current_loc - self.saved_loc).length > 0.0001 or \
-                   abs(current_rot.angle - self.saved_rot.angle) > 0.0001 or \
+                   current_rot.rotation_difference(self.saved_rot).angle > 0.0001 or \
                    abs(current_dist - self.saved_dist) > 0.0001:
                     
                     obj = context.active_object
                     if obj:
                         sens = sm_settings.sensitivity
-                        import mathutils
-                        
+
                         # 1. Извлекаем "чистые" (аппаратные) движения джойстика из смещения камеры во View-Space
                         # Это позволит нам отвязать джойстик от угла обзора камеры и получить сырые X/Y/Z
                         q_view = self.saved_rot.copy()
@@ -278,7 +271,10 @@ class NDOF_OT_object_control(bpy.types.Operator):
                             delta_rot_mat = delta_eu.to_matrix()
                             obj.rotation_euler = (delta_rot_mat @ obj.rotation_euler.to_matrix()).to_euler(obj.rotation_mode)
                         
-                        sm_settings.debug_info = f"Rot(X,Y,Z): {round(sm_rx,3)}, {round(sm_ry,3)}, {round(sm_rz,3)}"
+                        sm_settings.debug_info = (
+                            f"T({round(sm_tx,3)}, {round(sm_ty,3)}, {round(sm_tz,3)}) "
+                            f"R({round(sm_rx,3)}, {round(sm_ry,3)}, {round(sm_rz,3)})"
+                        )
                     
                         # ОЧЕНЬ ВАЖНО: Возвращаем камеру назад, чтобы было чувство, что она заблокирована
                         rv3d.view_location = self.saved_loc
@@ -295,7 +291,6 @@ class NDOF_OT_object_control(bpy.types.Operator):
                 context.area.tag_redraw()
 
         if event.type == 'NDOF_MOTION':
-            import time
             self.last_ndof_time = time.time()
             return {'PASS_THROUGH'}
 
@@ -304,12 +299,13 @@ class NDOF_OT_object_control(bpy.types.Operator):
     def execute(self, context):
         wm = context.window_manager
         wm["ndof_modal_running"] = True
-        
+
+        self._timer = None
         self.saved_loc = None
         self.saved_rot = None
         self.saved_dist = None
-        
-        # Получаем события окна и добавляем таймер
+        self.last_ndof_time = 0.0
+
         self._timer = wm.event_timer_add(0.01, window=context.window)
         wm.modal_handler_add(self)
         context.scene.spacemouse_settings.debug_info = "Listener started..."
