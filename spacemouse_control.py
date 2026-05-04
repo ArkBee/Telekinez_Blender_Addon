@@ -161,7 +161,6 @@ class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
 
         layout.prop(sm_settings, "mode", expand=True)
         layout.prop(sm_settings, "use_view_space", toggle=True, icon='TRACKING')
-        layout.prop(sm_settings, "lock_horizon", toggle=True, icon='LOCKVIEW_ON' if sm_settings.lock_horizon else 'LOCKVIEW_OFF')
         layout.prop(sm_settings, "sensitivity", slider=True)
         
         layout.operator("view3d.ndof_reset_object", text="Reset Object to Zero", icon='LOOP_BACK')
@@ -203,6 +202,10 @@ class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
                     col.label(text="Toggle Mode Shortcut:")
                     rna_keymap_ui.draw_kmi([], kc, km, kmi_mode, col, 0)
                 if kmi_horizon:
+                    col.separator()
+                    row = col.row(align=True)
+                    row.prop(sm_settings, "lock_horizon", toggle=True,
+                             icon='LOCKVIEW_ON' if sm_settings.lock_horizon else 'LOCKVIEW_OFF')
                     col.label(text="Toggle Lock Horizon Shortcut:")
                     rna_keymap_ui.draw_kmi([], kc, km, kmi_horizon, col, 0)
         
