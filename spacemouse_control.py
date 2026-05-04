@@ -16,7 +16,15 @@ import bpy
 from bpy.props import EnumProperty, StringProperty, FloatProperty, BoolProperty
 
 def update_lock_horizon(self, context):
-    context.preferences.inputs.use_rotate_around_active = self.lock_horizon
+    prefs = context.preferences.inputs
+    if self.lock_horizon:
+        self.saved_rotate_method = prefs.view_rotate_method
+        prefs.view_rotate_method = 'TURNTABLE'
+    else:
+        if self.saved_rotate_method != "":
+            prefs.view_rotate_method = self.saved_rotate_method
+        else:
+            prefs.view_rotate_method = 'TRACKBALL'
 
 def update_mode(self, context):
     prefs = context.preferences.inputs
@@ -52,6 +60,7 @@ class SpaceMouseSettings(bpy.types.PropertyGroup):
     )
     saved_orbit: StringProperty(default="")
     saved_lock_horizon: BoolProperty(default=True)
+    saved_rotate_method: StringProperty(default="")
 
     use_view_space: BoolProperty(
         name="View Relative",
@@ -87,8 +96,8 @@ class SpaceMouseSettings(bpy.types.PropertyGroup):
     inv_rz: BoolProperty(name="Invert Yaw (Twist)", default=False)
 
     lock_horizon: BoolProperty(
-        name="Lock Horizon",
-        description="Lock viewport horizon while orbiting with mouse (no horizon drift)",
+        name="Lock Horizon (Turntable)",
+        description="Switch mouse orbit to Turntable mode — horizon stays level. Off = Trackball (free rotation)",
         default=False,
         update=update_lock_horizon
     )
@@ -371,6 +380,11 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.spacemouse_settings = bpy.props.PointerProperty(type=SpaceMouseSettings)
+
+    # Синхронизируем тумблер lock_horizon с реальным состоянием Blender при старте
+    for scene in bpy.data.scenes:
+        current = bpy.context.preferences.inputs.view_rotate_method
+        scene.spacemouse_settings.lock_horizon = (current == 'TURNTABLE')
     
     # Добавляем горячую клавишу (по умолчанию Ctrl+Shift+M), вы сможете назначить кнопку джойстика
     wm = bpy.context.window_manager
