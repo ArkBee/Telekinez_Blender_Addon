@@ -79,6 +79,27 @@ class SpaceMouseSettings(bpy.types.PropertyGroup):
         ],
         default='MEDIAN',
     )
+
+    toggle_1_mode: EnumProperty(
+        name="Toggle 1 Activates",
+        description="Mode that the Toggle 1 hotkey switches to",
+        items=[
+            ('CAMERA', "Camera", "Standard viewport camera control"),
+            ('OBJECT', "Object", "Control selected objects"),
+            ('POSE',   "Pose",   "Control selected pose bones"),
+        ],
+        default='CAMERA',
+    )
+    toggle_2_mode: EnumProperty(
+        name="Toggle 2 Activates",
+        description="Mode that the Toggle 2 hotkey switches to",
+        items=[
+            ('CAMERA', "Camera", "Standard viewport camera control"),
+            ('OBJECT', "Object", "Control selected objects"),
+            ('POSE',   "Pose",   "Control selected pose bones"),
+        ],
+        default='OBJECT',
+    )
     saved_orbit: StringProperty(default="")
     saved_lock_horizon: BoolProperty(default=True)
     saved_rotate_method: StringProperty(default="")
@@ -254,16 +275,56 @@ class NDOF_OT_reset_object(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class NDOF_OT_toggle_mode(bpy.types.Operator):
-    """Cycle SpaceMouse control mode (Camera / Object / Pose)"""
-    bl_idname = "view3d.ndof_toggle_mode"
-    bl_label = "Toggle SpaceMouse Mode"
+# Chord detection: pressing Toggle 1 + Toggle 2 within CHORD_WINDOW seconds
+# rolls back the first press and toggles Lock Horizon instead.
+_chord_state = {
+    'last_toggle': 0,     # 0 = none, 1 = Toggle 1, 2 = Toggle 2
+    'last_time': 0.0,
+    'mode_before': None,  # mode the user was in before the first press
+}
+CHORD_WINDOW = 0.25
+
+
+def _handle_toggle(context, toggle_num):
+    sm = context.scene.spacemouse_settings
+    target = sm.toggle_1_mode if toggle_num == 1 else sm.toggle_2_mode
+    other = 2 if toggle_num == 1 else 1
+    now = time.time()
+
+    if (_chord_state['last_toggle'] == other
+            and now - _chord_state['last_time'] < CHORD_WINDOW):
+        # Chord detected — restore previous mode, toggle Lock Horizon
+        if _chord_state['mode_before'] is not None:
+            sm.mode = _chord_state['mode_before']
+        sm.lock_horizon = not sm.lock_horizon
+        _chord_state['last_toggle'] = 0
+        _chord_state['mode_before'] = None
+        return f"Chord -> Lock Horizon: {'ON' if sm.lock_horizon else 'OFF'}"
+
+    _chord_state['mode_before'] = sm.mode
+    _chord_state['last_toggle'] = toggle_num
+    _chord_state['last_time'] = now
+    sm.mode = target
+    return f"SpaceMouse Mode: {sm.mode}"
+
+
+class NDOF_OT_toggle_mode_1(bpy.types.Operator):
+    """Switch SpaceMouse to the mode configured for Toggle 1"""
+    bl_idname = "view3d.ndof_toggle_mode_1"
+    bl_label = "SpaceMouse Toggle 1"
 
     def execute(self, context):
-        sm = context.scene.spacemouse_settings
-        order = ['CAMERA', 'OBJECT', 'POSE']
-        sm.mode = order[(order.index(sm.mode) + 1) % len(order)]
-        self.report({'INFO'}, f"SpaceMouse Mode: {sm.mode}")
+        self.report({'INFO'}, _handle_toggle(context, 1))
+        return {'FINISHED'}
+
+
+class NDOF_OT_toggle_mode_2(bpy.types.Operator):
+    """Switch SpaceMouse to the mode configured for Toggle 2"""
+    bl_idname = "view3d.ndof_toggle_mode_2"
+    bl_label = "SpaceMouse Toggle 2"
+
+    def execute(self, context):
+        self.report({'INFO'}, _handle_toggle(context, 2))
         return {'FINISHED'}
 
 
@@ -462,7 +523,20 @@ class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
 
         layout.separator()
         layout.label(text="Shortcuts:")
-        self._draw_kmi(layout, context, sm, "view3d.ndof_toggle_mode", "Toggle Mode")
+
+        box1 = layout.box()
+        box1.label(text="Toggle 1")
+        box1.prop(sm, "toggle_1_mode", text="Activates Mode")
+        self._draw_kmi(box1, context, sm, "view3d.ndof_toggle_mode_1", "Hotkey")
+
+        box2 = layout.box()
+        box2.label(text="Toggle 2")
+        box2.prop(sm, "toggle_2_mode", text="Activates Mode")
+        self._draw_kmi(box2, context, sm, "view3d.ndof_toggle_mode_2", "Hotkey")
+
+        layout.label(text="Tip: press both Toggle hotkeys together -> Lock Horizon",
+                     icon='INFO')
+
         row = layout.row(align=True)
         row.prop(sm, "lock_horizon", toggle=True,
                  icon='LOCKVIEW_ON' if sm.lock_horizon else 'LOCKVIEW_OFF')
@@ -511,7 +585,8 @@ classes = (
     NDOF_OT_object_control,
     NDOF_OT_cancel_control,
     NDOF_OT_reset_object,
-    NDOF_OT_toggle_mode,
+    NDOF_OT_toggle_mode_1,
+    NDOF_OT_toggle_mode_2,
     NDOF_OT_toggle_lock_horizon,
 )
 
@@ -555,9 +630,15 @@ def register():
     kc = wm.keyconfigs.addon
     if kc:
         km = kc.keymaps.new(name='3D View', space_type='VIEW_3D')
-        kmi = km.keymap_items.new(NDOF_OT_toggle_mode.bl_idname,
-                                  type='M', value='PRESS', ctrl=True, shift=True)
+        # Toggle 1 — Shift+, switches to toggle_1_mode (default Camera)
+        kmi = km.keymap_items.new(NDOF_OT_toggle_mode_1.bl_idname,
+                                  type='COMMA', value='PRESS', shift=True)
         addon_keymaps.append((km, kmi))
+        # Toggle 2 — Shift+. switches to toggle_2_mode (default Object)
+        kmi = km.keymap_items.new(NDOF_OT_toggle_mode_2.bl_idname,
+                                  type='PERIOD', value='PRESS', shift=True)
+        addon_keymaps.append((km, kmi))
+        # Lock Horizon — direct hotkey, also fires when Toggle 1 + Toggle 2 are pressed together
         kmi = km.keymap_items.new(NDOF_OT_toggle_lock_horizon.bl_idname,
                                   type='H', value='PRESS', ctrl=True, shift=True)
         addon_keymaps.append((km, kmi))
