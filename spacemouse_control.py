@@ -21,6 +21,20 @@ from mathutils import Vector, Matrix, Quaternion, Euler
 # Settings
 # ---------------------------------------------------------------------------
 
+def _sync_ndof_lock(context):
+    """NDOF roll is free in OBJECT/POSE so the joystick can roll the target,
+    and follows the Lock Horizon UI only in CAMERA mode (where the joystick
+    drives the viewport directly)."""
+    sm = context.scene.spacemouse_settings
+    prefs = context.preferences.inputs
+    target = sm.lock_horizon if sm.mode == 'CAMERA' else False
+    for attr in ("ndof_lock_horizon", "use_ndof_lock_horizon"):
+        if hasattr(prefs, attr):
+            try: setattr(prefs, attr, target)
+            except Exception: pass
+            break
+
+
 def _level_horizon_in_all_view3d(context):
     """Remove roll from every VIEW_3D's view rotation, preserving look direction."""
     for win in context.window_manager.windows:
@@ -49,13 +63,7 @@ def update_lock_horizon(self, context):
             prefs.view_rotate_method = self.saved_rotate_method
         else:
             prefs.view_rotate_method = 'TRACKBALL'
-    # Keep NDOF Roll-suppression in sync with the UI toggle.
-    # Blender 4.x/5.x renamed `use_ndof_lock_horizon` -> `ndof_lock_horizon`; probe both.
-    for attr in ("ndof_lock_horizon", "use_ndof_lock_horizon"):
-        if hasattr(prefs, attr):
-            try: setattr(prefs, attr, self.lock_horizon)
-            except Exception: pass
-            break
+    _sync_ndof_lock(context)
     # Auto-straighten horizon when locking, so the user gets a level view
     # instead of being stuck at whatever tilt they had.
     if self.lock_horizon:
@@ -63,6 +71,9 @@ def update_lock_horizon(self, context):
 
 
 def update_mode(self, context):
+    # Roll-on-NDOF policy depends on mode: free in OBJECT/POSE, follows
+    # Lock Horizon UI in CAMERA. Resync whenever mode changes.
+    _sync_ndof_lock(context)
     # Center NDOF orbit on the active target's world pivot
     pivot = _active_pivot(context)
     if pivot is not None and context.space_data and context.space_data.type == 'VIEW_3D':
@@ -633,13 +644,9 @@ def register():
             target_state = (prefs.view_rotate_method == 'TURNTABLE')
             for scene in bpy.data.scenes:
                 scene.spacemouse_settings.lock_horizon = target_state
-            # Force NDOF horizon to match even if the assignment above didn't trigger
-            # the update callback (value was already equal).
-            for attr in ("ndof_lock_horizon", "use_ndof_lock_horizon"):
-                if hasattr(prefs, attr):
-                    try: setattr(prefs, attr, target_state)
-                    except Exception: pass
-                    break
+            # Resync NDOF lock through the policy helper, in case the assignment
+            # above didn't fire the update callback (value already equal).
+            _sync_ndof_lock(bpy.context)
         except Exception:
             pass
         return None  # one-shot
