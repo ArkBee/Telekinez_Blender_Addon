@@ -21,6 +21,24 @@ from mathutils import Vector, Matrix, Quaternion, Euler
 # Settings
 # ---------------------------------------------------------------------------
 
+def _level_horizon_in_all_view3d(context):
+    """Remove roll from every VIEW_3D's view rotation, preserving look direction."""
+    for win in context.window_manager.windows:
+        for area in win.screen.areas:
+            if area.type != 'VIEW_3D':
+                continue
+            for sp in area.spaces:
+                if sp.type != 'VIEW_3D':
+                    continue
+                rv3d = sp.region_3d
+                forward = (rv3d.view_rotation @ Vector((0, 0, -1))).normalized()
+                # Looking straight up/down -> yaw is undefined, leave alone
+                if abs(forward.z) > 0.9999:
+                    continue
+                rv3d.view_rotation = forward.to_track_quat('-Z', 'Y')
+            area.tag_redraw()
+
+
 def update_lock_horizon(self, context):
     prefs = context.preferences.inputs
     if self.lock_horizon:
@@ -38,6 +56,10 @@ def update_lock_horizon(self, context):
             try: setattr(prefs, attr, self.lock_horizon)
             except Exception: pass
             break
+    # Auto-straighten horizon when locking, so the user gets a level view
+    # instead of being stuck at whatever tilt they had.
+    if self.lock_horizon:
+        _level_horizon_in_all_view3d(context)
 
 
 def update_mode(self, context):
@@ -326,6 +348,17 @@ class NDOF_OT_toggle_lock_horizon(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class NDOF_OT_level_horizon(bpy.types.Operator):
+    """Straighten the viewport horizon, preserving look direction"""
+    bl_idname = "view3d.ndof_level_horizon"
+    bl_label = "Level Horizon"
+
+    def execute(self, context):
+        _level_horizon_in_all_view3d(context)
+        self.report({'INFO'}, "Horizon leveled")
+        return {'FINISHED'}
+
+
 class NDOF_OT_object_control(bpy.types.Operator):
     """SpaceMouse modal listener"""
     bl_idname = "view3d.ndof_object_control"
@@ -414,7 +447,7 @@ class NDOF_OT_object_control(bpy.types.Operator):
         e = q_diff_local.to_euler('XYZ')
         sm_rx =  e.x * (-1 if sm.inv_rx else 1)
         sm_ry = -e.z * (-1 if sm.inv_ry else 1)
-        sm_rz = -e.y * (-1 if sm.inv_rz else 1)
+        sm_rz =  e.y * (-1 if sm.inv_rz else 1)
 
         if sm.use_view_space:
             view_move = Vector((sm_tx, sm_tz, -sm_ty)) * sens
@@ -527,6 +560,7 @@ class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(sm, "lock_horizon", toggle=True,
                  icon='LOCKVIEW_ON' if sm.lock_horizon else 'LOCKVIEW_OFF')
+        row.operator("view3d.ndof_level_horizon", text="", icon='ORIENTATION_GLOBAL')
         self._draw_kmi(layout, context, sm, "view3d.ndof_toggle_lock_horizon", "Toggle Lock Horizon")
 
         layout.separator()
@@ -575,6 +609,7 @@ classes = (
     NDOF_OT_toggle_mode_1,
     NDOF_OT_toggle_mode_2,
     NDOF_OT_toggle_lock_horizon,
+    NDOF_OT_level_horizon,
 )
 
 addon_keymaps = []
