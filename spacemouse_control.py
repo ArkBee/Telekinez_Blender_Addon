@@ -34,28 +34,40 @@ def update_lock_horizon(self, context):
 
 
 def update_mode(self, context):
-    prefs = context.preferences.inputs
-    has_orbit = hasattr(prefs, "ndof_orbit")
-    has_lock = hasattr(prefs, "use_ndof_lock_horizon")
-
-    if self.mode == 'CAMERA':
-        if has_orbit and self.saved_orbit != "":
-            prefs.ndof_orbit = self.saved_orbit
-        if has_lock:
-            prefs.use_ndof_lock_horizon = self.saved_lock_horizon
-    else:
-        # OBJECT or POSE — save user prefs and switch NDOF to free trackball
-        if has_orbit:
-            self.saved_orbit = prefs.ndof_orbit
-            prefs.ndof_orbit = 'TRACKBALL'
-        if has_lock:
-            self.saved_lock_horizon = prefs.use_ndof_lock_horizon
-            prefs.use_ndof_lock_horizon = False
-
     # Center NDOF orbit on the active target's world pivot
     pivot = _active_pivot(context)
     if pivot is not None and context.space_data and context.space_data.type == 'VIEW_3D':
         context.space_data.region_3d.view_location = pivot
+
+
+# NDOF settings the addon enforces while active so Roll always reaches the viewport.
+# Blender renamed/dropped some of these between versions, so we probe attribute names.
+_NDOF_FORCE_FALSE = ("ndof_lock_horizon", "use_ndof_lock_horizon")
+_ndof_saved = {}  # attr_name -> original value
+
+
+def _force_ndof_friendly():
+    """Disable Blender's NDOF horizon-lock so Roll works regardless of mode/Lock Horizon UI."""
+    prefs = bpy.context.preferences.inputs
+    for attr in _NDOF_FORCE_FALSE:
+        if hasattr(prefs, attr):
+            if attr not in _ndof_saved:
+                _ndof_saved[attr] = getattr(prefs, attr)
+            try:
+                setattr(prefs, attr, False)
+            except Exception as e:
+                print(f"[Telekinez] could not set {attr}: {e}")
+
+
+def _restore_ndof():
+    prefs = bpy.context.preferences.inputs
+    for attr, val in list(_ndof_saved.items()):
+        if hasattr(prefs, attr):
+            try:
+                setattr(prefs, attr, val)
+            except Exception:
+                pass
+    _ndof_saved.clear()
 
 
 class SpaceMouseSettings(bpy.types.PropertyGroup):
@@ -100,8 +112,6 @@ class SpaceMouseSettings(bpy.types.PropertyGroup):
         ],
         default='OBJECT',
     )
-    saved_orbit: StringProperty(default="")
-    saved_lock_horizon: BoolProperty(default=True)
     saved_rotate_method: StringProperty(default="")
 
     use_view_space: BoolProperty(
@@ -598,6 +608,8 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.spacemouse_settings = bpy.props.PointerProperty(type=SpaceMouseSettings)
 
+    _force_ndof_friendly()
+
     def _sync_lock_horizon():
         try:
             current = bpy.context.preferences.inputs.view_rotate_method
@@ -645,6 +657,7 @@ def register():
 
 
 def unregister():
+    _restore_ndof()
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     del bpy.types.Scene.spacemouse_settings
