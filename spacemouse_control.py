@@ -31,6 +31,13 @@ def update_lock_horizon(self, context):
             prefs.view_rotate_method = self.saved_rotate_method
         else:
             prefs.view_rotate_method = 'TRACKBALL'
+    # Keep NDOF Roll-suppression in sync with the UI toggle.
+    # Blender 4.x/5.x renamed `use_ndof_lock_horizon` -> `ndof_lock_horizon`; probe both.
+    for attr in ("ndof_lock_horizon", "use_ndof_lock_horizon"):
+        if hasattr(prefs, attr):
+            try: setattr(prefs, attr, self.lock_horizon)
+            except Exception: pass
+            break
 
 
 def update_mode(self, context):
@@ -38,36 +45,6 @@ def update_mode(self, context):
     pivot = _active_pivot(context)
     if pivot is not None and context.space_data and context.space_data.type == 'VIEW_3D':
         context.space_data.region_3d.view_location = pivot
-
-
-# NDOF settings the addon enforces while active so Roll always reaches the viewport.
-# Blender renamed/dropped some of these between versions, so we probe attribute names.
-_NDOF_FORCE_FALSE = ("ndof_lock_horizon", "use_ndof_lock_horizon")
-_ndof_saved = {}  # attr_name -> original value
-
-
-def _force_ndof_friendly():
-    """Disable Blender's NDOF horizon-lock so Roll works regardless of mode/Lock Horizon UI."""
-    prefs = bpy.context.preferences.inputs
-    for attr in _NDOF_FORCE_FALSE:
-        if hasattr(prefs, attr):
-            if attr not in _ndof_saved:
-                _ndof_saved[attr] = getattr(prefs, attr)
-            try:
-                setattr(prefs, attr, False)
-            except Exception as e:
-                print(f"[Telekinez] could not set {attr}: {e}")
-
-
-def _restore_ndof():
-    prefs = bpy.context.preferences.inputs
-    for attr, val in list(_ndof_saved.items()):
-        if hasattr(prefs, attr):
-            try:
-                setattr(prefs, attr, val)
-            except Exception:
-                pass
-    _ndof_saved.clear()
 
 
 class SpaceMouseSettings(bpy.types.PropertyGroup):
@@ -608,13 +585,26 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.spacemouse_settings = bpy.props.PointerProperty(type=SpaceMouseSettings)
 
-    _force_ndof_friendly()
+    # Make sure a stale "running" flag from a previous disable-without-stop
+    # doesn't make _autostart_listener skip startup.
+    try:
+        bpy.context.window_manager["ndof_modal_running"] = False
+    except Exception:
+        pass
 
     def _sync_lock_horizon():
         try:
-            current = bpy.context.preferences.inputs.view_rotate_method
+            prefs = bpy.context.preferences.inputs
+            target_state = (prefs.view_rotate_method == 'TURNTABLE')
             for scene in bpy.data.scenes:
-                scene.spacemouse_settings.lock_horizon = (current == 'TURNTABLE')
+                scene.spacemouse_settings.lock_horizon = target_state
+            # Force NDOF horizon to match even if the assignment above didn't trigger
+            # the update callback (value was already equal).
+            for attr in ("ndof_lock_horizon", "use_ndof_lock_horizon"):
+                if hasattr(prefs, attr):
+                    try: setattr(prefs, attr, target_state)
+                    except Exception: pass
+                    break
         except Exception:
             pass
         return None  # one-shot
@@ -657,7 +647,11 @@ def register():
 
 
 def unregister():
-    _restore_ndof()
+    # Stop the modal listener cleanly so re-enable will autostart a fresh one.
+    try:
+        bpy.context.window_manager["ndof_modal_running"] = False
+    except Exception:
+        pass
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     del bpy.types.Scene.spacemouse_settings
