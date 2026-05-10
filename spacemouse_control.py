@@ -21,18 +21,35 @@ from mathutils import Vector, Matrix, Quaternion, Euler
 # Settings
 # ---------------------------------------------------------------------------
 
-def _sync_ndof_lock(context):
-    """NDOF roll is free in OBJECT/POSE so the joystick can roll the target,
-    and follows the Lock Horizon UI only in CAMERA mode (where the joystick
-    drives the viewport directly)."""
+def _sync_ndof_to_mode(context):
+    """Apply NDOF preferences that depend on the current addon mode.
+
+    CAMERA: drone-like FLY navigation so the joystick lifts/strafes the camera
+            freely. NDOF horizon-lock follows the Lock Horizon UI toggle.
+    OBJECT/POSE: ORBIT navigation (we snap the viewport back each tick anyway,
+            so what matters is that input deltas reach view_location/rotation).
+            NDOF horizon-lock forced OFF so the joystick can roll the target.
+    """
     sm = context.scene.spacemouse_settings
     prefs = context.preferences.inputs
-    target = sm.lock_horizon if sm.mode == 'CAMERA' else False
+
+    # Horizon lock policy
+    target_lock = sm.lock_horizon if sm.mode == 'CAMERA' else False
     for attr in ("ndof_lock_horizon", "use_ndof_lock_horizon"):
         if hasattr(prefs, attr):
-            try: setattr(prefs, attr, target)
+            try: setattr(prefs, attr, target_lock)
             except Exception: pass
             break
+
+    # Navigation mode policy
+    if hasattr(prefs, "ndof_navigation_mode"):
+        target_nav = 'FLY' if sm.mode == 'CAMERA' else 'ORBIT'
+        try: prefs.ndof_navigation_mode = target_nav
+        except Exception: pass
+
+
+# Backwards-compat alias (older internal call sites used this name).
+_sync_ndof_lock = _sync_ndof_to_mode
 
 
 def _level_horizon_in_all_view3d(context):
@@ -386,6 +403,9 @@ class NDOF_OT_reset_state(bpy.types.Operator):
                 try: setattr(prefs, attr, False)
                 except Exception: pass
                 break
+        if hasattr(prefs, "ndof_navigation_mode"):
+            try: prefs.ndof_navigation_mode = 'FLY'
+            except Exception: pass
         _level_horizon_in_all_view3d(context)
         self.report({'INFO'}, "Addon state reset (Camera + free roll, horizon level)")
         return {'FINISHED'}
