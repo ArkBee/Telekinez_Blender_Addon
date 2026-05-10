@@ -518,8 +518,11 @@ class NDOF_OT_object_control(bpy.types.Operator):
 
         q_diff_local = q_view.inverted() @ current_rot
         e = q_diff_local.to_euler('XYZ')
-        sm_rx =  e.x * (-1 if sm.inv_rx else 1)
-        sm_ry = -e.z * (-1 if sm.inv_ry else 1)
+        # Sign convention matches Blender's free-trackball NDOF (ndof_lock_horizon=False).
+        # All three default signs were calibrated under that mode after switching away
+        # from the old horizon-locked default.
+        sm_rx = -e.x * (-1 if sm.inv_rx else 1)
+        sm_ry =  e.z * (-1 if sm.inv_ry else 1)
         sm_rz =  e.y * (-1 if sm.inv_rz else 1)
 
         if sm.use_view_space:
