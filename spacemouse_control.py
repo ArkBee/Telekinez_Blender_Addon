@@ -41,9 +41,9 @@ def _sync_ndof_to_mode(context):
             except Exception: pass
             break
 
-    # Navigation mode policy
+    # Navigation mode policy: each addon mode remembers its own choice.
     if hasattr(prefs, "ndof_navigation_mode"):
-        target_nav = 'FLY' if sm.mode == 'CAMERA' else 'ORBIT'
+        target_nav = getattr(sm, f"nav_mode_{sm.mode.lower()}", 'ORBIT')
         try: prefs.ndof_navigation_mode = target_nav
         except Exception: pass
 
@@ -124,6 +124,28 @@ class SpaceMouseSettings(bpy.types.PropertyGroup):
         ],
         default='CAMERA',
     )
+    nav_mode_camera: EnumProperty(
+        name="Camera Nav", description="NDOF navigation in CAMERA mode",
+        items=[('FLY', "Fly", "Drone-style: free 6DOF, push to ascend/strafe"),
+               ('ORBIT', "Orbit", "Orbit around a focus point")],
+        default='FLY',
+        update=lambda s, c: _sync_ndof_to_mode(c),
+    )
+    nav_mode_object: EnumProperty(
+        name="Object Nav", description="NDOF navigation while in OBJECT mode",
+        items=[('FLY', "Fly", "Drone-style"),
+               ('ORBIT', "Orbit", "Orbit around a focus point")],
+        default='ORBIT',
+        update=lambda s, c: _sync_ndof_to_mode(c),
+    )
+    nav_mode_pose: EnumProperty(
+        name="Pose Nav", description="NDOF navigation while in POSE mode",
+        items=[('FLY', "Fly", "Drone-style"),
+               ('ORBIT', "Orbit", "Orbit around a focus point")],
+        default='ORBIT',
+        update=lambda s, c: _sync_ndof_to_mode(c),
+    )
+
     toggle_2_mode: EnumProperty(
         name="Toggle 2 Activates",
         description="Mode that the Toggle 2 hotkey switches to",
@@ -403,9 +425,8 @@ class NDOF_OT_reset_state(bpy.types.Operator):
                 try: setattr(prefs, attr, False)
                 except Exception: pass
                 break
-        if hasattr(prefs, "ndof_navigation_mode"):
-            try: prefs.ndof_navigation_mode = 'FLY'
-            except Exception: pass
+        # Apply per-mode nav (the camera default is FLY)
+        _sync_ndof_to_mode(context)
         _level_horizon_in_all_view3d(context)
         self.report({'INFO'}, "Addon state reset (Camera + free roll, horizon level)")
         return {'FINISHED'}
@@ -574,6 +595,12 @@ class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
         sm = context.scene.spacemouse_settings
 
         layout.prop(sm, "mode", expand=True)
+        # Per-mode NDOF navigation choice (Fly vs Orbit) — persisted independently
+        # for each mode and applied on switch.
+        nav_attr = f"nav_mode_{sm.mode.lower()}"
+        row = layout.row(align=True)
+        row.label(text="NDOF:")
+        row.prop(sm, nav_attr, expand=True)
         row = layout.row(align=True)
         row.prop(sm, "pivot_mode", expand=True)
         layout.prop(sm, "use_view_space", toggle=True, icon='TRACKING')
