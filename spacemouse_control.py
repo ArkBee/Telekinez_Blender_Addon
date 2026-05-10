@@ -54,18 +54,13 @@ def _level_horizon_in_all_view3d(context):
 
 
 def update_lock_horizon(self, context):
+    # Lock Horizon ON  -> mouse orbit = TURNTABLE (horizon stays level when orbiting).
+    # Lock Horizon OFF -> mouse orbit = TRACKBALL (free rotation).
+    # Hardcoded so the toggle can never get stuck in TURNTABLE just because the
+    # user's external Blender default already was TURNTABLE.
     prefs = context.preferences.inputs
-    if self.lock_horizon:
-        self.saved_rotate_method = prefs.view_rotate_method
-        prefs.view_rotate_method = 'TURNTABLE'
-    else:
-        if self.saved_rotate_method != "":
-            prefs.view_rotate_method = self.saved_rotate_method
-        else:
-            prefs.view_rotate_method = 'TRACKBALL'
+    prefs.view_rotate_method = 'TURNTABLE' if self.lock_horizon else 'TRACKBALL'
     _sync_ndof_lock(context)
-    # Auto-straighten horizon when locking, so the user gets a level view
-    # instead of being stuck at whatever tilt they had.
     if self.lock_horizon:
         _level_horizon_in_all_view3d(context)
 
@@ -122,8 +117,6 @@ class SpaceMouseSettings(bpy.types.PropertyGroup):
         ],
         default='OBJECT',
     )
-    saved_rotate_method: StringProperty(default="")
-
     use_view_space: BoolProperty(
         name="View Relative",
         description="Move and rotate relative to camera view",
@@ -370,6 +363,34 @@ class NDOF_OT_level_horizon(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class NDOF_OT_reset_state(bpy.types.Operator):
+    """Reset addon and Blender NDOF prefs to a known-good state.
+    Use if controls feel inverted or stuck after toggling things around."""
+    bl_idname = "view3d.ndof_reset_state"
+    bl_label = "Reset Addon State"
+
+    def execute(self, context):
+        sm = context.scene.spacemouse_settings
+        # Clear chord-detector state so a stale partial chord can't trigger.
+        _chord_state['last_toggle'] = 0
+        _chord_state['mode_before'] = None
+        _chord_state['last_time'] = 0.0
+        # Force defaults
+        sm.lock_horizon = False  # fires update_lock_horizon -> sets prefs + sync_ndof
+        sm.mode = 'CAMERA'        # fires update_mode -> sync_ndof
+        # Belt and suspenders: also force prefs in case something didn't trigger
+        prefs = context.preferences.inputs
+        prefs.view_rotate_method = 'TRACKBALL'
+        for attr in ("ndof_lock_horizon", "use_ndof_lock_horizon"):
+            if hasattr(prefs, attr):
+                try: setattr(prefs, attr, False)
+                except Exception: pass
+                break
+        _level_horizon_in_all_view3d(context)
+        self.report({'INFO'}, "Addon state reset (Camera + free roll, horizon level)")
+        return {'FINISHED'}
+
+
 class NDOF_OT_object_control(bpy.types.Operator):
     """SpaceMouse modal listener"""
     bl_idname = "view3d.ndof_object_control"
@@ -537,7 +558,9 @@ class VIEW3D_PT_spacemouse_control(bpy.types.Panel):
         row.prop(sm, "pivot_mode", expand=True)
         layout.prop(sm, "use_view_space", toggle=True, icon='TRACKING')
         layout.prop(sm, "sensitivity", slider=True)
-        layout.operator("view3d.ndof_reset_object", text="Reset Target(s)", icon='LOOP_BACK')
+        row = layout.row(align=True)
+        row.operator("view3d.ndof_reset_object", text="Reset Target(s)", icon='LOOP_BACK')
+        row.operator("view3d.ndof_reset_state", text="Reset State", icon='FILE_REFRESH')
 
         layout.separator()
         box = layout.box()
@@ -621,6 +644,7 @@ classes = (
     NDOF_OT_toggle_mode_2,
     NDOF_OT_toggle_lock_horizon,
     NDOF_OT_level_horizon,
+    NDOF_OT_reset_state,
 )
 
 addon_keymaps = []
@@ -638,19 +662,20 @@ def register():
     except Exception:
         pass
 
-    def _sync_lock_horizon():
+    def _push_state_to_blender():
+        # On enable, our persisted lock_horizon is the source of truth; push it to
+        # Blender's mouse orbit method and NDOF horizon so the world matches the UI.
         try:
-            prefs = bpy.context.preferences.inputs
-            target_state = (prefs.view_rotate_method == 'TURNTABLE')
-            for scene in bpy.data.scenes:
-                scene.spacemouse_settings.lock_horizon = target_state
-            # Resync NDOF lock through the policy helper, in case the assignment
-            # above didn't fire the update callback (value already equal).
-            _sync_ndof_lock(bpy.context)
+            ctx = bpy.context
+            sm = ctx.scene.spacemouse_settings
+            ctx.preferences.inputs.view_rotate_method = (
+                'TURNTABLE' if sm.lock_horizon else 'TRACKBALL'
+            )
+            _sync_ndof_lock(ctx)
         except Exception:
             pass
         return None  # one-shot
-    bpy.app.timers.register(_sync_lock_horizon, first_interval=0.1)
+    bpy.app.timers.register(_push_state_to_blender, first_interval=0.1)
 
     def _autostart_listener():
         try:
