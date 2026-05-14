@@ -208,10 +208,12 @@ def _apply_camera(context, rv3d, t_local, r_local):
     cam_up      = view_rot @ Vector((0, 1, 0))
     cam_forward = view_rot @ Vector((0, 0, -1))
 
-    if sm.camera_style == 'WALK':
+    if sm.camera_style == 'WALK' and rv3d.is_perspective:
         # Collapse orbit distance into the eye position once. Without this,
         # "forward" only slides the orbit pivot — the camera (sitting
         # view_distance back along -forward) doesn't move toward the target.
+        # Skip in ortho: there view_distance is the zoom scale, not an
+        # eye-offset distance, so collapsing it teleports the view.
         if rv3d.view_distance > 1e-5:
             rv3d.view_location = rv3d.view_location + cam_forward * rv3d.view_distance
             rv3d.view_distance = 0.0
@@ -302,6 +304,13 @@ class NDOF_OT_listener(bpy.types.Operator):
                 return {'RUNNING_MODAL'}  # consume, but no-op
 
             if sm.mode == 'CAMERA':
+                # Ortho views have no meaningful eye position and our WALK/ORBIT
+                # math distorts them (view_distance is a zoom scale there, not
+                # a distance). Hand the event off to Blender's native NDOF nav
+                # which knows how to pan/zoom an ortho viewport correctly.
+                if not rv3d.is_perspective:
+                    sm.debug_info = "[CAMERA-ORTHO] passthrough → native NDOF"
+                    return {'PASS_THROUGH'}
                 _apply_camera(context, rv3d, t_local, r_local)
                 sm.debug_info = (
                     f"[CAMERA] "
