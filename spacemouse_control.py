@@ -379,25 +379,47 @@ class NDOF_OT_reset_target(bpy.types.Operator):
 
 
 class NDOF_OT_level_view(bpy.types.Operator):
-    """Zero out roll: keep look direction, snap horizon to world Z."""
+    """Zero out roll AND restore view_distance if collapsed.
+    Combo "fix-it" button: snaps horizon to world Z and unsticks mouse-wheel
+    zoom for viewports that ended up at view_distance==0 (a leftover from
+    older WALK-collapse builds — Blender's wheel zoom is multiplicative, so
+    it can't grow back from 0)."""
     bl_idname = "view3d.ndof_level_view"
-    bl_label = "Level View (Zero Roll)"
+    bl_label = "Level View / Fix Zoom"
+
+    _RESTORED_DISTANCE = 5.0
 
     def execute(self, context):
-        n = 0
+        leveled = 0
+        zoom_fixed = 0
         for win in context.window_manager.windows:
             for area in win.screen.areas:
                 if area.type != 'VIEW_3D':
                     continue
                 rv3d = area.spaces.active.region_3d
+
+                # Restore wheel zoom if collapsed. Shift the pivot ahead by the
+                # restored distance so the eye (camera position) stays put —
+                # only the orbit pivot moves into the scene ahead of the camera.
+                if rv3d.is_perspective and rv3d.view_distance < 1e-5:
+                    cam_forward = rv3d.view_rotation @ Vector((0, 0, -1))
+                    rv3d.view_location = (rv3d.view_location
+                                          + cam_forward * self._RESTORED_DISTANCE)
+                    rv3d.view_distance = self._RESTORED_DISTANCE
+                    zoom_fixed += 1
+
                 forward = (rv3d.view_rotation @ Vector((0, 0, -1))).normalized()
                 # Looking straight up/down — yaw is undefined, leave it alone.
-                if abs(forward.z) > 0.9999:
-                    continue
-                rv3d.view_rotation = forward.to_track_quat('-Z', 'Y')
+                if abs(forward.z) <= 0.9999:
+                    rv3d.view_rotation = forward.to_track_quat('-Z', 'Y')
+                    leveled += 1
+
                 area.tag_redraw()
-                n += 1
-        self.report({'INFO'}, f"Leveled {n} viewport(s)")
+
+        msg = f"Leveled {leveled} viewport(s)"
+        if zoom_fixed:
+            msg += f", restored zoom on {zoom_fixed}"
+        self.report({'INFO'}, msg)
         return {'FINISHED'}
 
 
