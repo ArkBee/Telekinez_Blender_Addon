@@ -208,26 +208,30 @@ def _apply_camera(context, rv3d, t_local, r_local):
     cam_up      = view_rot @ Vector((0, 1, 0))
     cam_forward = view_rot @ Vector((0, 0, -1))
 
-    if sm.camera_style == 'WALK' and rv3d.is_perspective:
-        # Collapse orbit distance into the eye position once. Without this,
-        # "forward" only slides the orbit pivot — the camera (sitting
-        # view_distance back along -forward) doesn't move toward the target.
-        # Skip in ortho: there view_distance is the zoom scale, not an
-        # eye-offset distance, so collapsing it teleports the view.
-        if rv3d.view_distance > 1e-5:
-            rv3d.view_location = rv3d.view_location + cam_forward * rv3d.view_distance
-            rv3d.view_distance = 0.0
-
-    world_move = cam_right * t_local.x + cam_up * t_local.y + cam_forward * t_local.z
-    rv3d.view_location = rv3d.view_location + world_move
-
     pitch = Quaternion(cam_right,   r_local.x)
     yaw   = Quaternion(cam_up,      r_local.y)
     roll  = Quaternion(cam_forward, 0.0 if sm.lock_roll else r_local.z)
-
     delta = yaw @ pitch @ roll
-    rv3d.view_rotation = (delta @ view_rot).normalized()
+    new_view_rot = (delta @ view_rot).normalized()
+    world_move = cam_right * t_local.x + cam_up * t_local.y + cam_forward * t_local.z
 
+    if sm.camera_style == 'WALK' and rv3d.is_perspective:
+        # Walk feel without touching view_distance (so mouse wheel zoom still
+        # works). Pivot sits view_distance ahead of the eye; we anchor the eye,
+        # apply translation in eye space, then place the new pivot ahead of
+        # the post-rotation eye by the same view_distance. Net effect: rotation
+        # spins the camera in place (not orbits around an anchor), translation
+        # walks the eye, and view_distance is left alone for the user / wheel.
+        new_cam_forward = new_view_rot @ Vector((0, 0, -1))
+        eye = rv3d.view_location - cam_forward * rv3d.view_distance
+        eye_after = eye + world_move
+        rv3d.view_location = eye_after + new_cam_forward * rv3d.view_distance
+    else:
+        # ORBIT (and ortho fallback handled upstream): translation slides the
+        # pivot, rotation orbits the camera around it. Blender NDOF default.
+        rv3d.view_location = rv3d.view_location + world_move
+
+    rv3d.view_rotation = new_view_rot
     _redraw_view3d(context)
 
 
